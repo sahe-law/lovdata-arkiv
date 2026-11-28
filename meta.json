@@ -1,0 +1,19 @@
+{
+ "hentet_utc": "2026-11-28T04:23:49+00:00",
+ "kilde": "https://api.lovdata.no/v1/publicData/get/",
+ "lisens": "Datakilde Lovdata, NLOD 2.0",
+ "filer": {
+  "gjeldende-lover.tar.bz2": {
+   "sha256": "1ac6ad5128fef99854267b11c85cc0f65b6629e65fc52927751a4d2b665c0ac9",
+   "bytes": 5812819,
+   "lovdata_sist_endret": "2026-11-28T02:32:00Z",
+   "lovdata_bytes": "5812819"
+  },
+  "gjeldende-sentrale-forskrifter.tar.bz2": {
+   "sha256": "ab36e35d14ebb8f925cda6a5d76deec471acbf4b1dd83c26832d565d42d02020",
+   "bytes": 21545379,
+   "lovdata_sist_endret": "2026-11-28T02:32:00Z",
+   "lovdata_bytes": "21545379"
+  }
+ }
+}

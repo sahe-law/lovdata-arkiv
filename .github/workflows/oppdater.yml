@@ -1,0 +1,72 @@
+name: Oppdater Lovdata-arkiv
+on:
+  schedule:
+    - cron: "28 3 * * *"   # hver natt ca. kl. 04:28 norsk tid (Lovdata oppdaterer ca. 03:30)
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  hent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Last ned fra api.lovdata.no og pakk ut
+        run: |
+          set -euo pipefail
+          mkdir -p ut/gjeldende-lover ut/gjeldende-sentrale-forskrifter && cd ut
+          B=https://api.lovdata.no/v1/publicData
+          curl -fsS --retry 3 -o liste.json "$B/list"
+          
+          for f in gjeldende-lover gjeldende-sentrale-forskrifter; do
+            curl -fsS --retry 3 -o "$f.tar.bz2" "$B/get/$f.tar.bz2"
+            bzip2 -t "$f.tar.bz2"   # stopper hvis filen er ødelagt
+            tar -xjf "$f.tar.bz2" -C "$f"  # Pakker ut XML-filene
+          done
+          
+          python3 - << 'PY'
+          import json, hashlib, datetime, os
+          liste = {x["filename"]: x for x in json.load(open("liste.json"))}
+          meta = {"hentet_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                  "kilde": "https://api.lovdata.no/v1/publicData/get/",
+                  "lisens": "Datakilde Lovdata, NLOD 2.0", "filer": {}}
+          for f in ("gjeldende-lover.tar.bz2", "gjeldende-sentrale-forskrifter.tar.bz2"):
+              d = open(f, "rb").read()
+              meta["filer"][f] = {"sha256": hashlib.sha256(d).hexdigest(), "bytes": len(d),
+                                 "lovdata_sist_endret": liste.get(f, {}).get("lastModified"),
+                                 "lovdata_bytes": liste.get(f, {}).get("sizeBytes")}
+          json.dump(meta, open("meta.json", "w"), indent=1, ensure_ascii=False)
+          PY
+          rm liste.json
+
+      - name: Installer rclone for overføring til Drive
+        uses: AnimMouse/setup-rclone@v1
+
+      - name: Synkroniser utpakket XML til Google Drive
+        continue-on-error: true   # Drive-feil skal ikke stoppe GitHub-oppdateringen
+        env:
+          RCLONE_CONFIG_GDRIVE_TYPE: drive
+          RCLONE_CONFIG_GDRIVE_SCOPE: drive
+          RCLONE_CONFIG_GDRIVE_SERVICE_ACCOUNT_FILE: sa.json
+          RCLONE_CONFIG_GDRIVE_ROOT_FOLDER_ID: 1gag0Q6n_8rVLfWIzEkqlPDteabQmdaRd
+        run: |
+          set -euo pipefail
+          printf '%s' '${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}' > sa.json
+          # Synkroniserer alt (inkludert utpakket XML) til Google Drive
+          rclone sync ut/ gdrive: --transfers 16 --checkers 16 --fast-list
+          rm -f sa.json
+
+      - name: Erstatt gammel versjon på GitHub (Legger til utpakket XML)
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" repo
+          cd repo
+          git checkout --orphan ny
+          git rm -rfq --cached . || true
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+          
+          # Kopierer ALT fra ut/ (både .tar.bz2, meta.json og mappene med XML) over til GitHub-repoet
+          cp -r ../ut/* .
+          
+          printf '# Lovdata-arkiv\n\nAutomatisk kopi av Lovdatas offentlige API, oppdatert hver natt. Bare nyeste versjon beholdes.\n\nDatakilde Lovdata, NLOD 2.0.\n' > README.md
+          git add -A
+          git -c user.name="lovdata-bot" -c user.email="lovdata-bot@users.noreply.github.com" commit -qm "Lovdata $(date -u +%F)"
+          git push -fq origin ny:main
